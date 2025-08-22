@@ -1,0 +1,13 @@
+{
+  "name": "telecom",
+  "version": "1.0.0",
+  "description": "Standalone React telecom material calculator demo",
+  "main": "index.html",
+  "scripts": {
+    "test": "echo \"No tests specified\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
