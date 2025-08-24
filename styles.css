@@ -71,3 +71,26 @@ button {
   padding: 0.5rem;
   margin-top: 1rem;
 }
+
+.money {
+  font-size: 0.8rem;
+  margin-left: 0.5rem;
+}
+
+.subtotal {
+  text-align: right;
+  font-weight: bold;
+  padding: 0.5rem 1rem;
+  background: #f9fafb;
+}
+
+.summary {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #e2e8f0;
+  font-weight: bold;
+}
+
+.summary div {
+  margin-bottom: 0.25rem;
+}

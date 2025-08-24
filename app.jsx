@@ -1,4 +1,36 @@
 const { useState, useMemo } = React;
+const PRICE_MAP = window.PRICES || PRICES;
+const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+
+function getBaseName(name) {
+  return name.replace(/^\(\s*\d+\s*ft\s*\)\s*/i, '').trim();
+}
+
+function parseFeetFromName(name) {
+  const m = name.match(/^\(\s*(\d+)\s*ft\s*\)/i);
+  return m ? Number(m[1]) : 0;
+}
+
+function parseFeetFromQty(qty) {
+  if (typeof qty === 'string') {
+    const m = qty.match(/(\d+)/);
+    return m ? Number(m[1]) : 0;
+  }
+  return 0;
+}
+
+function itemExtendedPrice(item) {
+  const base = getBaseName(item.name);
+  const priceInfo = PRICE_MAP[base];
+  if (!priceInfo) return 0;
+  if (priceInfo.unit === 'ft') {
+    const feet = parseFeetFromName(item.name) || parseFeetFromQty(item.qty);
+    return feet * priceInfo.price;
+  } else {
+    const qtyEach = typeof item.qty === 'number' ? item.qty : 1;
+    return qtyEach * priceInfo.price;
+  }
+}
 
 function TelecomMaterialCalculator() {
   const [siteType, setSiteType] = useState("civil");
@@ -6,6 +38,7 @@ function TelecomMaterialCalculator() {
   const [cableRun, setCableRun] = useState(60);
   const [microwave, setMicrowave] = useState("no");
   const [siteId, setSiteId] = useState("");
+  const [markupPct, setMarkupPct] = useState(0);
 
   const isMicrowave = microwave === "yes";
   const pvc3Length = useMemo(() => Math.ceil((Number(cableRun) || 0) / 10) * 10, [cableRun]);
@@ -126,6 +159,11 @@ function TelecomMaterialCalculator() {
     return isMicrowave && item?.microwave === false;
   }
 
+  const grandTotal = sections.reduce((sum, s) => {
+    return sum + s.items.filter(i => !isExcluded(i)).reduce((acc, i) => acc + itemExtendedPrice(i), 0);
+  }, 0);
+  const totalWithMarkup = grandTotal * (1 + markupPct / 100);
+
   const siteInfoLine = `Site: ${siteId || 'N/A'} | Type: ${siteType.toUpperCase()} | Canopy: ${canopy.toUpperCase()} | Cable Run: ${cableRun} ft | Microwave: ${isMicrowave ? 'YES' : 'NO'}`;
 
   const printableText = useMemo(() => {
@@ -175,6 +213,127 @@ function TelecomMaterialCalculator() {
     w.document.close();
     w.focus();
     w.print();
+  }
+
+  function handleExportExcel() {
+    const wb = XLSX.utils.book_new();
+
+    sections.forEach(sec => {
+      const filtered = sec.items.filter(i => !isExcluded(i));
+      const rows = filtered.map((item, idx) => {
+        const base = getBaseName(item.name);
+        const priceInfo = PRICE_MAP[base];
+        const price = priceInfo ? priceInfo.price : 0;
+        const total = itemExtendedPrice(item);
+        return [idx + 1, item.name, String(item.qty), fmt.format(price), fmt.format(total)];
+      });
+      const sectionSubtotal = filtered.reduce((sum, i) => sum + itemExtendedPrice(i), 0);
+      const wsData = [
+        ['Telecom Site Material List'],
+        [siteInfoLine],
+        [],
+        ['#', 'Item', 'Qty', 'Price', 'Ext. Total'],
+        ...rows,
+        [],
+        ['Subtotal', '', '', '', fmt.format(sectionSubtotal)],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      XLSX.utils.book_append_sheet(wb, ws, sec.title.slice(0, 31));
+    });
+
+    let totalCounter = 1;
+    const totalRows = [];
+    sections.forEach(sec => {
+      sec.items.forEach(item => {
+        if (!isExcluded(item)) {
+          const base = getBaseName(item.name);
+          const priceInfo = PRICE_MAP[base];
+          const price = priceInfo ? priceInfo.price : 0;
+          const total = itemExtendedPrice(item);
+          totalRows.push([totalCounter++, sec.title, item.name, String(item.qty), fmt.format(price), fmt.format(total)]);
+        }
+      });
+    });
+    const totalData = [
+      ['Telecom Site Material List'],
+      [siteInfoLine],
+      [],
+      ['#', 'Section', 'Item', 'Qty', 'Price', 'Ext. Total'],
+      ...totalRows,
+      [],
+      ['Grand Total', '', '', '', '', fmt.format(grandTotal)],
+      ['Markup', '', '', '', '', `${markupPct}%`],
+      ['Total w/ Markup', '', '', '', '', fmt.format(totalWithMarkup)],
+    ];
+    const wsTotal = XLSX.utils.aoa_to_sheet(totalData);
+    XLSX.utils.book_append_sheet(wb, wsTotal, 'Totals');
+
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = siteId ? `material_list_${siteId}.xlsx` : 'material_list.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleExportPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+
+    const header = () => {
+      doc.setFontSize(12);
+      doc.text('🗼 Telecom Site Material List', 14, 12);
+      doc.setFontSize(10);
+      doc.text(siteInfoLine, 14, 18);
+    };
+
+    const footer = pageNumber => {
+      doc.setFontSize(10);
+      doc.text(`Page ${pageNumber}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+    };
+
+    let y = 26;
+    sections.forEach(sec => {
+      const filtered = sec.items.filter(i => !isExcluded(i));
+      const rows = filtered.map((item, idx) => {
+        const base = getBaseName(item.name);
+        const priceInfo = PRICE_MAP[base];
+        const price = priceInfo ? priceInfo.price : 0;
+        const total = itemExtendedPrice(item);
+        return [idx + 1, item.name, String(item.qty), fmt.format(price), fmt.format(total)];
+      });
+      const sectionSubtotal = filtered.reduce((sum, i) => sum + itemExtendedPrice(i), 0);
+      doc.setFontSize(11);
+      doc.text(sec.title, 14, y - 4);
+      doc.autoTable({
+        startY: y,
+        head: [['#', 'Item', 'Qty', 'Price', 'Ext. Total']],
+        body: rows,
+        margin: { top: 26 },
+        styles: { fontSize: 10 },
+        didDrawPage: data => {
+          header();
+          footer(data.pageNumber);
+        },
+      });
+      y = doc.lastAutoTable.finalY + 4;
+      doc.text(`Subtotal: ${fmt.format(sectionSubtotal)}`, 14, y);
+      y += 10;
+    });
+
+    doc.text(`Grand Total: ${fmt.format(grandTotal)}`, 14, y);
+    y += 6;
+    doc.text(`Markup: ${markupPct}%`, 14, y);
+    y += 6;
+    doc.text(`Total w/ Markup: ${fmt.format(totalWithMarkup)}`, 14, y);
+
+    doc.save(siteId ? `material_list_${siteId}.pdf` : 'material_list.pdf');
   }
 
   function savePreset() {
@@ -238,10 +397,13 @@ function TelecomMaterialCalculator() {
       </fieldset>
 
       <div>
-        <button onClick={() => {}}>Generate</button>
+        <label>Markup % </label>
+        <input type="number" min="0" max="100" value={markupPct} onChange={e => setMarkupPct(Number(e.target.value) || 0)} />
         <button onClick={handleCopy}>Copy List</button>
         <button onClick={handleDownload}>Download .txt</button>
         <button onClick={handlePrint}>Print</button>
+        <button onClick={handleExportExcel}>Export Excel</button>
+        <button onClick={handleExportPDF}>Export PDF</button>
         <button onClick={savePreset}>Save Preset</button>
         <button onClick={loadPreset}>Load Preset</button>
       </div>
@@ -250,22 +412,36 @@ function TelecomMaterialCalculator() {
         <strong>Site:</strong> {siteId || 'N/A'} | <strong>Type:</strong> {siteType.toUpperCase()} | <strong>Canopy:</strong> {canopy.toUpperCase()} | <strong>Cable Run:</strong> {cableRun} ft | <strong>Microwave:</strong> {isMicrowave ? 'YES' : 'NO'}
       </div>
 
-      {sections.map(section => (
-        <div key={section.title} className="section">
-          <h3>{section.title}</h3>
-          <ul>
-            {section.items.map((item, idx) => {
-              const excluded = isExcluded(item);
-              return (
-                <li key={idx} className={excluded ? 'excluded' : ''}>
-                  <span>{idx + 1}. {item.name}</span>
-                  <span className="qty">{String(item.qty)}</span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ))}
+      {sections.map(section => {
+        const sectionSubtotal = section.items
+          .filter(i => !isExcluded(i))
+          .reduce((sum, i) => sum + itemExtendedPrice(i), 0);
+        return (
+          <div key={section.title} className="section">
+            <h3>{section.title}</h3>
+            <ul>
+              {section.items.map((item, idx) => {
+                const excluded = isExcluded(item);
+                const total = itemExtendedPrice(item);
+                return (
+                  <li key={idx} className={excluded ? 'excluded' : ''}>
+                    <span>{idx + 1}. {item.name}</span>
+                    <span className="qty">{String(item.qty)}</span>
+                    <span className="money">{fmt.format(total)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="subtotal">Subtotal: {fmt.format(sectionSubtotal)}</div>
+          </div>
+        );
+      })}
+
+      <div className="summary">
+        <div>Grand Total: {fmt.format(grandTotal)}</div>
+        <div>Markup: {markupPct}%</div>
+        <div>Total w/ Markup: {fmt.format(totalWithMarkup)}</div>
+      </div>
     </div>
   );
 }
