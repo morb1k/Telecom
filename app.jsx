@@ -177,6 +177,97 @@ function TelecomMaterialCalculator() {
     w.print();
   }
 
+  function handleExportExcel() {
+    const wb = XLSX.utils.book_new();
+
+    sections.forEach(sec => {
+      const rows = sec.items
+        .filter(i => !isExcluded(i))
+        .map((item, idx) => [idx + 1, item.name, String(item.qty)]);
+      const wsData = [
+        ['Telecom Site Material List'],
+        [siteInfoLine],
+        [],
+        ['#', 'Item', 'Qty'],
+        ...rows,
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      XLSX.utils.book_append_sheet(wb, ws, sec.title.slice(0, 31));
+    });
+
+    let totalCounter = 1;
+    const totalRows = [];
+    sections.forEach(sec => {
+      sec.items.forEach(item => {
+        if (!isExcluded(item)) {
+          totalRows.push([totalCounter++, sec.title, item.name, String(item.qty)]);
+        }
+      });
+    });
+    const totalData = [
+      ['Telecom Site Material List'],
+      [siteInfoLine],
+      [],
+      ['#', 'Section', 'Item', 'Qty'],
+      ...totalRows,
+    ];
+    const wsTotal = XLSX.utils.aoa_to_sheet(totalData);
+    XLSX.utils.book_append_sheet(wb, wsTotal, 'Totals');
+
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = siteId ? `material_list_${siteId}.xlsx` : 'material_list.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleExportPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+
+    const header = () => {
+      doc.setFontSize(12);
+      doc.text('🗼 Telecom Site Material List', 14, 12);
+      doc.setFontSize(10);
+      doc.text(siteInfoLine, 14, 18);
+    };
+
+    const footer = pageNumber => {
+      doc.setFontSize(10);
+      doc.text(`Page ${pageNumber}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+    };
+
+    let y = 26;
+    sections.forEach(sec => {
+      const rows = sec.items
+        .filter(i => !isExcluded(i))
+        .map((item, idx) => [idx + 1, item.name, String(item.qty)]);
+      doc.setFontSize(11);
+      doc.text(sec.title, 14, y - 4);
+      doc.autoTable({
+        startY: y,
+        head: [['#', 'Item', 'Qty']],
+        body: rows,
+        margin: { top: 26 },
+        styles: { fontSize: 10 },
+        didDrawPage: data => {
+          header();
+          footer(data.pageNumber);
+        },
+      });
+      y = doc.lastAutoTable.finalY + 10;
+    });
+
+    doc.save(siteId ? `material_list_${siteId}.pdf` : 'material_list.pdf');
+  }
+
   function savePreset() {
     const preset = { siteType, canopy, cableRun, microwave, siteId };
     localStorage.setItem("telecom_calc_preset", JSON.stringify(preset));
@@ -238,10 +329,11 @@ function TelecomMaterialCalculator() {
       </fieldset>
 
       <div>
-        <button onClick={() => {}}>Generate</button>
         <button onClick={handleCopy}>Copy List</button>
         <button onClick={handleDownload}>Download .txt</button>
         <button onClick={handlePrint}>Print</button>
+        <button onClick={handleExportExcel}>Export Excel</button>
+        <button onClick={handleExportPDF}>Export PDF</button>
         <button onClick={savePreset}>Save Preset</button>
         <button onClick={loadPreset}>Load Preset</button>
       </div>
